@@ -118,7 +118,10 @@ window.onload = () => {
 
         const plane = document.createElement('a-plane');
         plane.setAttribute('look-at', '#myCamera');
-        plane.setAttribute('position', '0 1.5 0'); 
+        
+        // --- 修正点：保存された yOffset を使用（ない場合はデフォルト 1.0） ---
+        const yPos = data.yOffset !== undefined ? data.yOffset : 1.0;
+        plane.setAttribute('position', `0 ${yPos} 0`); 
         
         const size = 2.5; 
         if (data.aspect >= 1) {
@@ -137,6 +140,7 @@ window.onload = () => {
             mesh.material.needsUpdate = true;
         });
 
+        // アニメーション設定
         entity.setAttribute('animation__shrink', { property: 'scale', to: '0.3 0.3 0.3', dur: 300, easing: 'easeOutQuad', startEvents: 'shrink' });
         entity.setAttribute('animation__grow', { property: 'scale', to: '1 1 1', dur: 300, easing: 'easeOutQuad', startEvents: 'grow' });
         entity.setAttribute('proximity-listener', { shrinkRadius: 3 });
@@ -153,7 +157,7 @@ window.onload = () => {
         };
     }
 
-    // --- 7. タップで5m先に「重なりを避けて」配置 ---
+    // --- 7. タップで5m先に「高さループ＋重なり回避」で配置 ---
     const handleTap = (e) => {
         if (!appStarted || e.target.closest('.ui-container') || !selectedImgUrl) return;
 
@@ -166,22 +170,29 @@ window.onload = () => {
         let targetLat = currentPos.lat + (distance * Math.cos(angle)) / 111320;
         let targetLng = currentPos.lng + (distance * Math.sin(angle)) / (111320 * Math.cos(currentPos.lat * Math.PI / 180));
 
-        // --- 重なり回避ロジック ---
+        // シーン内の既存枚数を取得して高さを計算（3段階ループ）
         const entities = document.querySelectorAll('[gps-entity-place]');
+        const photoCount = entities.length;
+        // 1.0m, 1.5m, 2.0m のループ
+        const yOffset = 1.0 + ((photoCount % 3) * 0.5);
+
+        // 重なり回避ロジック（平面上で近すぎる場合）
         entities.forEach(el => {
             const attr = el.getAttribute('gps-entity-place');
-            const exLat = parseFloat(attr.latitude);
-            const exLng = parseFloat(attr.longitude);
-            const distBetween = getDistance(targetLat, targetLng, exLat, exLng);
-
-            // もし既存の写真と1.5m以内なら、少し（1m分）ずらす
-            if (distBetween < 1.5) {
-                targetLat += (1.0 / 111320); // 北に約1mずらす
-                targetLng += (1.0 / (111320 * Math.cos(targetLat * Math.PI / 180))); // 東に約1mずらす
+            const distBetween = getDistance(targetLat, targetLng, parseFloat(attr.latitude), parseFloat(attr.longitude));
+            if (distBetween < 0.6) {
+                targetLat += (0.4 / 111320);
+                targetLng += (0.4 / (111320 * Math.cos(targetLat * Math.PI / 180)));
             }
         });
 
-        const data = { lat: targetLat, lng: targetLng, image: selectedImgUrl, aspect: selectedAspect };
+        const data = { 
+            lat: targetLat, 
+            lng: targetLng, 
+            yOffset: yOffset, // 高さを保存
+            image: selectedImgUrl, 
+            aspect: selectedAspect 
+        };
         
         db.transaction(["photos"], "readwrite").objectStore("photos").add(data);
         createARPhoto(data);
